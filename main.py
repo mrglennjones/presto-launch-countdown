@@ -332,12 +332,13 @@ def display_countdown(launch_time):
             text_color = WHITE  # Default color
 
             # **🔥 Smoothly Transition Each LED Between Two Colors**
-            color_progress += 1 / transition_time  # Slowly increase transition progress
-            if color_progress >= 1.0:  # When full transition is complete
-                color_progress = 0  # Reset progress
-                for i in range(NUM_LEDS):  # Set new colors
+            color_progress += 1 / transition_time  # Smooth color blending
+            if color_progress >= 1.0:  # Instead of resetting, wrap around
+                color_progress = 0
+                for i in range(NUM_LEDS):  
                     led_colors[i] = NEBULA_COLORS[next_colors[i]]
                     next_colors[i] = (next_colors[i] + 1) % len(NEBULA_COLORS)
+
 
             for i in range(NUM_LEDS):
                 # **Blend Between Current & Next Color**
