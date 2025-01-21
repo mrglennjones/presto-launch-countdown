@@ -268,8 +268,7 @@ def display_background(image_path):
         print(f"🚨 Error Displaying Image: {e}")
 
 
-
-# 📡 Countdown Timer (With Smooth Nebula LED Effect)
+# 📡 Countdown Timer (With Auto Fetch When Countdown Ends)
 def display_countdown(launch_time):
     vector.set_font("Roboto-Medium.af", 35)  # ✅ Keep countdown font large
 
@@ -290,11 +289,11 @@ def display_countdown(launch_time):
     pulse_speed = 0.10  # Controls how fast the text throbs (lower = slower)
 
     nebula_step = 0  # Controls nebula color cycling
-    nebula_speed = 0.002  # 🔥 **Much slower speed for smooth transitions**
-    transition_time = 200  # 🔥 **How long it takes to transition between colors**
+    nebula_speed = 0.002  # Smooth nebula effect speed
+    transition_time = 200  # Time for nebula color transition
     color_progress = 0  # Progress through color transition
 
-    # **Each LED starts at a different color**
+    # Each LED starts at a different nebula color
     led_colors = [NEBULA_COLORS[i % len(NEBULA_COLORS)] for i in range(NUM_LEDS)]
     next_colors = [(i + 1) % len(NEBULA_COLORS) for i in range(NUM_LEDS)]
 
@@ -303,12 +302,15 @@ def display_countdown(launch_time):
         remaining_seconds = int(launch_time - now)
 
         if remaining_seconds <= 0:
-            days, hours, minutes, seconds = 0, 0, 0, 0  # Launch time reached
-        else:
-            days = remaining_seconds // 86400
-            hours = (remaining_seconds % 86400) // 3600
-            minutes = (remaining_seconds % 3600) // 60
-            seconds = remaining_seconds % 60
+            # Countdown has ended
+            print("🎉 Countdown complete! Fetching new launch data...")
+            return  # Exit the countdown function to fetch new data
+
+        # Calculate days, hours, minutes, seconds
+        days = remaining_seconds // 86400
+        hours = (remaining_seconds % 86400) // 3600
+        minutes = (remaining_seconds % 3600) // 60
+        seconds = remaining_seconds % 60
 
         countdown_numbers = [f"{days:02}", f"{hours:02}", f"{minutes:02}", f"{seconds:02}"]
         labels = ["DAYS", "HOURS", "MINS", "SECS"]
@@ -326,7 +328,7 @@ def display_countdown(launch_time):
             
             pulse_step += pulse_speed  # Increment pulse animation step
 
-        else:  # **🌌 Idle Mode (Smooth Nebula Effect)**
+        else:  # **🌌 Idle Mode (Nebula Effect)**
             text_color = WHITE  # Default color
 
             # **🔥 Smoothly Transition Each LED Between Two Colors**
@@ -381,6 +383,7 @@ def display_countdown(launch_time):
 
 
 
+
 # 📡 Display Launch Data (No Darkening Background)
 def display_launch(launch_data):
     display.set_pen(0)  
@@ -424,8 +427,8 @@ def display_launch(launch_data):
             {"text": f"🚀 {name}", "size": 30},
             {"text": f"📅 {formatted_date}", "size": 30},
             {"text": f"🕒 {time_iso} GMT", "size": 30},
-            {"text": f"🏢 {provider}", "size": 25},  # 🔥 Smaller font
-            {"text": f"📍 {location}", "size": 25},  # 🔥 Smaller font
+            {"text": f"🏢 {provider}", "size": 20},  # 🔥 Smaller font
+            {"text": f"📍 {location}", "size": 20},  # 🔥 Smaller font
         ]
 
         # ✅ Dynamically center each text line
