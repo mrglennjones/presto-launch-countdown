@@ -195,7 +195,7 @@ def download_image(url, name):
 
 # 📡 **Fetch latest launch data**
 def fetch_launch_data():
-    base_url = "https://lldev.thespacedevs.com/2.3.0/launches/"
+    base_url = "https://ll.thespacedevs.com/2.3.0/launches/"
     now = utime.time()
     future = now + (180 * 24 * 60 * 60)
     now_iso = unix_to_iso8601(now)
