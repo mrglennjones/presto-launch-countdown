@@ -1,8 +1,8 @@
 import gc
 import sdcard
 import machine
-import plasma  # Required for LED control
-import math    # For smooth pulsing effect
+import plasma  # LED control
+import math    # Smooth effects
 import uos
 import urequests
 import jpegdec
@@ -14,12 +14,93 @@ import utime
 import re
 from picovector import PicoVector, Transform, ANTIALIAS_FAST
 
-# Initialize backlight LEDs
+
+#DEBUG_MODE = True  # Start with debug mode enabled
+# 🔥 Global variables to keep animation smooth
+nebula_step = 0  # Keep track of nebula animation state
+
+
+# 📟 Terminal-Style Boot Log
+BOOT_LOG = []  # Store boot log messages
+MAX_LOG_LINES = 8  # Maximum lines to keep on screen
+LOG_WRAP_WIDTH = 420  # Adjust for actual screen width
+LOG_LINE_HEIGHT = 20  # Spacing between lines
+
+def insert_soft_breaks(text, max_width):
+    """Inserts soft breaks in long words (filenames, URLs) if they exceed max width."""
+    if int(vector.measure_text(text)[2]) < max_width:
+        return [text]  # ✅ Already fits, return as a single line
+
+    broken_text = []
+    for i in range(0, len(text), 50):  # ✅ Insert break every 10 characters
+        broken_text.append(text[i:i+50])
+
+    return broken_text  # ✅ Return list of broken parts
+
+def wrap_text(text, max_width):
+    """Wraps text into multiple lines while handling long words (URLs, filenames)."""
+    words = text.split(" ")  # Split into words
+    wrapped_lines = []
+    current_line = ""
+
+    for word in words:
+        test_line = current_line + (" " if current_line else "") + word
+        text_width = int(vector.measure_text(test_line)[2])  # Measure pixel width
+
+        if text_width < max_width:
+            current_line = test_line  # ✅ Add word to current line
+        else:
+            if current_line:
+                wrapped_lines.append(current_line)  # ✅ Store full line
+            wrapped_lines.extend(insert_soft_breaks(word, max_width))  # ✅ Add broken word parts
+            current_line = ""
+
+    if current_line:
+        wrapped_lines.append(current_line)  # ✅ Store last line
+
+    return wrapped_lines  # ✅ Returns a full list of wrapped lines
+
+def boot_log(category, message):
+    """Logs and displays a message on the Presto screen with automatic word wrapping."""
+    global BOOT_LOG
+
+    log_message = f"[{category}] {message}"
+    print(log_message)  # ✅ Print to console (serial output)
+
+    # ✅ Wrap text to avoid overflowing
+    wrapped_lines = wrap_text(log_message, LOG_WRAP_WIDTH)
+
+    for line in wrapped_lines:
+        BOOT_LOG.append(line)  # ✅ Store each wrapped line separately
+
+    # ✅ Keep only the latest logs on screen
+    while len(BOOT_LOG) > MAX_LOG_LINES:
+        BOOT_LOG.pop(0)  # ✅ Remove oldest log entry
+
+    # 🔄 **Update Terminal Display**
+    display.set_pen(BLACK)  # Clear the screen
+    display.clear()
+
+    y_offset = 15  # Start from the top of the screen
+    vector.set_font("Roboto-Medium.af", 18)
+
+    for log in BOOT_LOG:
+        display.set_pen(GREEN)
+        vector.text(log, 10, y_offset)  # ✅ Draw each log entry
+        y_offset += LOG_LINE_HEIGHT  # ✅ Move down for the next log line
+
+    presto.update()  # ✅ Force screen refresh
+    utime.sleep(0.1)  # ✅ Small delay to allow updates
+
+
+
+
+# 🛠️ Initialize backlight LEDs
 NUM_LEDS = 7  # Presto has 7 LEDs
 bl = plasma.WS2812(NUM_LEDS, 0, 0, 33)
 bl.start()
 
-# Define nebula colors for smooth blending
+# 🌌 Define nebula colors for smooth blending
 NEBULA_COLORS = [
     (148, 0, 211),  # Dark Violet
     (75, 0, 130),   # Indigo
@@ -30,28 +111,26 @@ NEBULA_COLORS = [
     (128, 0, 128)   # Purple
 ]
 
-
-# **Smoothly transition between two colors using Linear Interpolation (LERP)**
+# **🔥 Smoothly transition between two colors using Linear Interpolation (LERP)**
 def lerp_color(color1, color2, t):
-    """Interpolates smoothly between two RGB colors"""
     r1, g1, b1 = color1
     r2, g2, b2 = color2
-    r = int(r1 + (r2 - r1) * t)
-    g = int(g1 + (g2 - g1) * t)
-    b = int(b1 + (b2 - b1) * t)
-    return (r, g, b)
+    return (
+        int(r1 + (r2 - r1) * t),
+        int(g1 + (g2 - g1) * t),
+        int(b1 + (b2 - b1) * t),
+    )
 
-# 🌌 **Run Nebula Effect When Idle (Smooth LED Color Cycling)**
+# 🌌 **Idle Nebula Effect**
 def nebula_idle_effect():
-    nebula_step = 0  # Controls nebula color cycling
-    nebula_speed = 0.02  # Controls how fast nebula colors shift
-    
+    global nebula_step
+    nebula_speed = 0.02
+
     while True:
-        # **🔥 Cycle Each LED Through Nebula Colors**
         for i in range(NUM_LEDS):
-            color_index = int((nebula_step + i) % len(NEBULA_COLORS))  # Cycle through colors
-            r, g, b = NEBULA_COLORS[color_index]  
-            
+            color_index = int((nebula_step + i) % len(NEBULA_COLORS))
+            r, g, b = NEBULA_COLORS[color_index]
+
             # Apply a sine wave brightness effect for smooth blending
             brightness_factor = 0.5 + 0.5 * math.sin(nebula_step + (i * 0.5))
             r = int(r * brightness_factor)
@@ -60,61 +139,26 @@ def nebula_idle_effect():
 
             bl.set_rgb(i, r, g, b)  # Set LED color
         
-        nebula_step += nebula_speed  # Smoothly transition between colors
+        nebula_step += nebula_speed
         utime.sleep(0.05)  # Smooth update interval
 
 # 🖥️ Initialize Presto in FULL resolution mode (480x480)
-presto = Presto(ambient_light=False, full_res=True, layers=1)
+#presto = Presto(ambient_light=False, full_res=True)
+presto = Presto(ambient_light=False, full_res=True, layers=2)
 display = presto.display
-WIDTH, HEIGHT = display.get_bounds()  # 480x480
+
+display.set_layer(0)
+# Clear layer 0, decode, etc.
+
+display.set_layer(1)
+# decode again, etc.
+
+WIDTH, HEIGHT = display.get_bounds()
 jpeg = jpegdec.JPEG(display)
 vector = PicoVector(display)
 
-# 📂 SD Card Directory for Images
-SD_DIR = "/sd/gallery"
-
-# 🎨 Colors
-WHITE = display.create_pen(255, 255, 255)    # Normal text
-RED = display.create_pen(255, 50, 50)        # Rocket Name
-GREEN = display.create_pen(50, 255, 50)      # Date
-ORANGE = display.create_pen(255, 165, 0)     # Time
-BLACK = display.create_pen(0, 0, 0)          # Background text shadow
-DARKGREY = display.create_pen(70, 70, 70)          # DARKGREY
-DARKERGREY = display.create_pen(30, 30, 30)          # DARKERGREY
-
-# 🎨 Set up Vector Font
-vector.set_antialiasing(ANTIALIAS_FAST)
-vector.set_font("Roboto-Medium.af", 22)  # Bigger font for countdown
-transform = Transform()
-vector.set_transform(transform)
-
-# 🔄 Convert Unix timestamp to ISO 8601 format
-def unix_to_iso8601(timestamp):
-    time_tuple = utime.localtime(timestamp)
-    return f"{time_tuple[0]:04d}-{time_tuple[1]:02d}-{time_tuple[2]:02d}T{time_tuple[3]:02d}:{time_tuple[4]:02d}:{time_tuple[5]:02d}Z"
-
-# 📡 Connect to Wi-Fi
-def connect_wifi():
-    wlan = network.WLAN(network.STA_IF)
-    wlan.active(True)
-
-    if not wlan.isconnected():
-        print("🌐 Connecting to Wi-Fi...")
-        wlan.connect(secrets.WIFI_SSID, secrets.WIFI_PASSWORD)  # ✅ Use correct variables
-
-        timeout = 10  # Wait up to 10 seconds
-        while not wlan.isconnected() and timeout > 0:
-            utime.sleep(1)
-            timeout -= 1
-
-    if wlan.isconnected():
-        print(f"✅ Connected to Wi-Fi: {wlan.ifconfig()[0]}")
-    else:
-        print("🚨 Failed to connect to Wi-Fi")
-
-
-# 🔄 Ensure SD directory exists
 def setup_sd():
+    boot_log("DISK", "💾 Initializing SD Card...")
     try:
         sd_spi = machine.SPI(0, sck=machine.Pin(34), mosi=machine.Pin(35), miso=machine.Pin(36))
         sd = sdcard.SDCard(sd_spi, machine.Pin(39))
@@ -123,11 +167,59 @@ def setup_sd():
         if "gallery" not in uos.listdir("/sd"):
             uos.mkdir(SD_DIR)
 
-        print("✅ SD Card Mounted Successfully!")
+        boot_log("DISK", "✅ SD Card Mounted Successfully!")
+        return True
     except Exception as e:
-        print(f"🚨 SD Mount Error: {e}")
+        boot_log("DISK", f"🚨 SD Mount Error: {e}")
+        return False
 
-# 🗑️ Delete all previous images
+
+# 📂 SD Card Directory for Images
+SD_DIR = "/sd/gallery"
+
+# 🎨 Colors
+WHITE = display.create_pen(255, 255, 255)
+BLACK = display.create_pen(0, 0, 0)
+DARKGREY = display.create_pen(70, 70, 70)
+DARKERGREY = display.create_pen(30, 30, 30)
+GREEN = display.create_pen(0, 200, 0)
+
+# 🎨 Set up Vector Font
+vector.set_antialiasing(ANTIALIAS_FAST)
+vector.set_font("Roboto-Medium.af", 22)
+transform = Transform()
+vector.set_transform(transform)
+
+# 🔄 **Convert Unix timestamp to ISO 8601 format**
+def unix_to_iso8601(timestamp):
+    """Converts Unix timestamp to ISO 8601 (UTC) format."""
+    time_tuple = utime.localtime(timestamp)
+    return f"{time_tuple[0]:04d}-{time_tuple[1]:02d}-{time_tuple[2]:02d}T{time_tuple[3]:02d}:{time_tuple[4]:02d}:{time_tuple[5]:02d}Z"
+
+
+# 📡 **Connect to Wi-Fi**
+def connect_wifi():
+    boot_log("WEB", "🌐 Connecting to Wi-Fi...")
+    wlan = network.WLAN(network.STA_IF)
+    wlan.active(True)
+
+    wlan.connect(secrets.WIFI_SSID, secrets.WIFI_PASSWORD)
+    timeout = 20  # Increase timeout for reliability
+
+    while not wlan.isconnected() and timeout > 0:
+        utime.sleep(1)
+        timeout -= 1
+
+    if wlan.isconnected():
+        ip = wlan.ifconfig()[0]
+        boot_log("WEB", f"✅ Connected to Wi-Fi: {ip}")
+    else:
+        boot_log("WEB", "🚨 Failed to connect to Wi-Fi! Retrying...")
+        utime.sleep(5)
+        return connect_wifi()  # Retry connection
+
+
+# 🗑️ **Delete all previous images from SD card**
 def clear_images():
     try:
         for file in uos.listdir(SD_DIR):
@@ -137,339 +229,434 @@ def clear_images():
         print("✅ Old Images Cleared!")
     except OSError as e:
         print(f"🚨 Error Clearing Images: {e}")
-    
     gc.collect()
 
-# 🚀 Fetch and store launch data with images
-def fetch_launch_data():
-    base_url = "https://ll.thespacedevs.com/2.3.0/launches/" # Max 15 requests per hour limit
-    #base_url = "https://lldev.thespacedevs.com/2.3.0/launches/" change to lldev is testing (no limit)
-    now = utime.time()
-    future = now + (180 * 24 * 60 * 60)  # 6 months ahead
 
-    now_iso = unix_to_iso8601(now)
-    future_iso = unix_to_iso8601(future)
-
-    url = f"{base_url}?net__gte={now_iso}&net__lte={future_iso}&include_suborbital=false&mode=detailed&limit=1&ordering=net"
-    print(f"🌍 Fetching: {url}")
-
-    try:
-        response = urequests.get(url)
-        if response.status_code == 200:
-            data = response.json()
-            response.close()
-            print(f"✅ Launch data fetched successfully!")
-            gc.collect()
-            return data
-        else:
-            print(f"❌ API Error: {response.status_code} - {response.text}")
-            response.close()
-            return None
-    except Exception as e:
-        print(f"🚨 Error Fetching Data: {e}")
-        return None
-
-# 🖼️ Clean filename for SD card storage
 def clean_filename(name, extension):
-    name = name.lower()
-    name = re.sub(r"[^a-z0-9_]", "_", name)  
-    return name[:20] + f".{extension}"  
+    """Ensures a valid filename while preserving its exact extension."""
+    if not isinstance(name, str) or not isinstance(extension, str):
+        boot_log("ERROR", f"❌ Invalid filename input types: {type(name)}, {type(extension)}")
+        return "default_image.jpg"  # ✅ Fallback filename
 
-# 🖼️ Download and save image to SD card (Supports PNG & JPEG)
-def download_image(url, name):
+    # ✅ Ensure only valid characters in the filename
+    name = re.sub(r"[^a-zA-Z0-9_.-]", "_", name)
+
+    # ✅ Keep the extension exactly as it is (no forced conversion)
+    filename = f"{name[:150]}.{extension}"  # ✅ Preserve original extension
+
+    boot_log("DISK", f"🔍 DEBUG: Clean Filename -> {filename}, Type: {type(filename)}")
+    return filename  # ✅ Always return a clean string
+
+
+
+def download_image(url):
+    """Downloads an image from the provided URL while preserving its original extension."""
     try:
-        if not url or not isinstance(url, str):
-            print("🚨 No valid image URL provided!")
+        # ✅ Ensure URL is valid
+        if not isinstance(url, str) or not url.startswith("http"):
+            boot_log("ERROR", f"❌ Invalid image URL: {url}")
             return None
 
-        # ✅ Ensure correct extension handling (supports PNG & JPEG)
-        if url.lower().endswith(".png"):
-            extension = "png"
-        elif url.lower().endswith((".jpg", ".jpeg")):
-            extension = "jpg"  # ✅ Normalize JPEG extensions to .jpg
+        # ✅ Extract the filename and extension properly
+        filename = url.split("/")[-1]  # Last part of URL
+        if "." in filename:
+            extension = filename.split(".")[-1]  # ✅ Preserve exact extension
         else:
-            print(f"🚨 Unsupported image format: {url}")
+            boot_log("ERROR", f"❌ No valid extension found in: {url}")
             return None
 
-        filename = clean_filename(name, extension)
+        # ✅ Clean filename while keeping the exact extension
+        filename = clean_filename(filename.split(".")[0], extension)  
         filepath = f"{SD_DIR}/{filename}"
 
-        print(f"📷 Downloading: {url} -> {filepath}")
+        boot_log("WEB", f"📷 Downloading Image: {url} -> {filepath}")
 
+        # ✅ Download the image
         response = urequests.get(url)
         if response.status_code == 200:
             with open(filepath, "wb") as f:
                 f.write(response.content)
             response.close()
             gc.collect()
-            print(f"✅ Image saved: {filepath}")
-            return filepath
+            boot_log("DISK", f"✅ Image saved: {filepath}")
+            return filepath  # ✅ Return path of the downloaded image
         else:
-            print(f"🚨 Image Download Error: {response.status_code}")
+            boot_log("ERROR", f"❌ Image Download Error: {response.status_code}")
             response.close()
             return None
     except Exception as e:
-        print(f"🚨 Error Downloading Image: {e}")
+        boot_log("ERROR", f"❌ Image Download Exception: {e}")
         return None
 
-# Darken background by drawing multiple semi-transparent black rectangles
-def darken_background():
-    display.set_pen(BLACK)  # Black overlay
-    
-    # Draw multiple slightly transparent layers
-    for i in range(3):  # Adjust the number of layers for darkness
-        display.rectangle(0, 0, WIDTH, HEIGHT)
-        presto.update()  # Refresh display after each layer
 
+def fetch_and_process_launch(launch_data):
+    """Fetches, processes, and prepares launch data for display."""
 
-# 📸 Display Background Image (Properly Centered PNG & JPEG)
-def display_background(image_path):
+    display.set_pen(BLACK)
+    display.clear()
+    boot_log("UI", "🖥 Preparing Launch Display...")
+
+    if not launch_data or "results" not in launch_data:
+        boot_log("WEB", "🚨 No valid launch data received!")
+        return
+
+    launch = launch_data["results"][0]
+    name = launch["name"]
+    net = launch["net"]
+    provider = launch["launch_service_provider"]["name"]
+    location = launch["pad"]["location"]["name"]
+
+    boot_log("DATA", f"🚀 Launch: {name}")
+    boot_log("DATA", f"📅 Date: {net}")
+
+    # **Extract and format date & time**
     try:
-        display.set_pen(0)  # Set black background
-        display.clear()
+        date_iso = net.split("T")[0]
+        time_iso = net.split("T")[1][:5]
+        date_parts = date_iso.split("-")
+        formatted_date = f"{date_parts[2]}-{date_parts[1]}-{date_parts[0]}"
 
-        # ✅ Handle PNG images (Use scale=2 and center properly)
-        if image_path.endswith(".png"):
-            png = pngdec.PNG(display)
-            png.open_file(image_path)
+        boot_log("DATA", f"⏳ Formatted Date: {formatted_date}")
+    except Exception as e:
+        boot_log("ERROR", f"❌ Date Parsing Error: {e}")
+        return
 
-            # ✅ Get actual PNG dimensions
-            try:
-                image_width, image_height = png.get_width(), png.get_height()
-            except AttributeError:
-                image_width, image_height = 480, 480  # Default if method isn't available
+    # **Convert launch time to Unix timestamp**
+    try:
+        date_time = net[:19]
+        year, month, day = map(int, date_time.split("T")[0].split("-"))
+        hour, minute, second = map(int, date_time.split("T")[1].split(":"))
+        launch_time_unix = utime.mktime((year, month, day, hour, minute, second, 0, 0))
 
-            # ✅ Calculate the true centered position
-            center_x = (WIDTH - (image_width * 2)) // 2  
-            center_y = (HEIGHT - (image_height * 2)) // 2  
+        boot_log("DATA", f"⏳ Launch Time (Unix): {launch_time_unix}")
+    except Exception as e:
+        boot_log("ERROR", f"❌ Launch Time Conversion Error: {e}")
+        return
 
-            png.decode(center_x, center_y, scale=2)  # ✅ Scale PNG properly & center it
+    # **Download Image**
+    image_data = launch.get("image", {})
+    image_url = image_data.get("thumbnail_url", None) if isinstance(image_data, dict) else None
 
-        # ✅ Handle JPEG images (Ensure correct scaling & centering)
-        elif image_path.endswith(".jpg") or image_path.endswith(".jpeg"):
-            jpeg.open_file(image_path)
+    if image_url:
+        boot_log("WEB", f"📷 Downloading Image: {image_url}")
+        img_path = download_image(image_url)
+    else:
+        boot_log("WEB", "🚨 No Image URL Found!")
+        img_path = None
 
-            # ✅ JPEGs are automatically scaled with SCALE_HALF, assume full-screen
-            image_width, image_height = 480, 480  
-            
-            # ✅ Calculate the true centered position
-            center_x = (WIDTH - image_width) // 2
-            center_y = (HEIGHT - image_height) // 2
+    if isinstance(img_path, str):
+        boot_log("UI", f"✅ Image Path Verified: {img_path}")
+        #display_background(img_path)
+        boot_log("UI", "✅ Image Downloaded Successfully")
+    else:
+        boot_log("ERROR", "❌ Image Load Failed!")
 
-            jpeg.decode(center_x, center_y, jpegdec.JPEG_SCALE_HALF)  # ✅ Center JPEG
+    # ✅ **Ensure Terminal is Fully Removed Here**
+    display_final_ui(name, formatted_date, time_iso, provider, location, img_path, launch_time_unix)
+
+
+
+# 📡 **Fetch latest launch data**
+def fetch_launch_data():
+    boot_log("WEB", "🌍 Fetching Launch Data...")
+    base_url = "https://lldev.thespacedevs.com/2.3.0/launches/"
+    now = utime.time()
+    future = now + (180 * 24 * 60 * 60)  # 6 months ahead
+    now_iso = unix_to_iso8601(now)
+    future_iso = unix_to_iso8601(future)
+
+    url = f"{base_url}?net__gte={now_iso}&net__lte={future_iso}&include_suborbital=false&mode=detailed&limit=1&ordering=net"
+
+    try:
+        response = urequests.get(url)
+        if response.status_code == 200:
+            boot_log("WEB", "✅ Launch data fetched successfully!")
+            return response.json()
+        else:
+            boot_log("WEB", f"❌ API Error: {response.status_code}")
+            return None
+    except Exception as e:
+        boot_log("WEB", f"🚨 Error Fetching Data: {e}")
+        return None
+
+
+import gc
+import jpegdec
+import pngdec
+
+def display_background(image_path):
+    """
+    Displays a background image (JPEG or PNG) from the SD card.
+    - Never stringifies any exceptions from jpegdec,
+      so it cannot trigger "can't convert 'tuple' object to str".
+    - Uses broad except blocks to gracefully handle unknown errors.
+    """
+
+    # (1) Basic validations for the path
+    if not isinstance(image_path, str):
+        boot_log("ERROR", "❌ Invalid image path (not a string).")
+        return
+
+    file_name = image_path.strip().split("/")[-1]
+    if file_name not in uos.listdir(SD_DIR):
+        boot_log("ERROR", "❌ Image file not found on SD.")
+        return
+
+    # (2) Clear the screen and free memory before decode
+    display.set_pen(0)
+    display.clear()
+    gc.collect()
+
+    # (Optional) Log we’re starting
+    boot_log("UI", f"✅ Attempting to display: {file_name}")
+
+    try:
+        # ---------- Handle PNG ----------
+        if image_path.lower().endswith(".png"):
+            local_png = pngdec.PNG(display)
+            local_png.open_file(image_path)
+
+            w, h = local_png.get_width(), local_png.get_height()
+            center_x = (WIDTH - w) // 2
+            center_y = (HEIGHT - h) // 2
+
+            # If big images cause memory issues, you can do scale=2 to reduce size
+            local_png.decode(center_x, center_y, scale=1)
+
+        # ---------- Handle JPEG/JPG ----------
+        elif image_path.lower().endswith((".jpg", ".jpeg")):
+            local_jpeg = jpegdec.JPEG(display)
+            local_jpeg.open_file(image_path)
+
+            w, h = local_jpeg.get_width(), local_jpeg.get_height()
+            center_x = (WIDTH - w) // 2
+            center_y = (HEIGHT - h) // 2
+
+            # If memory is tight, you can try:
+            # local_jpeg.decode(center_x, center_y, jpegdec.JPEG_SCALE_HALF, dither=False)
+            local_jpeg.decode(center_x, center_y, jpegdec.JPEG_SCALE_FULL, dither=True)
 
         else:
-            print(f"🚨 Unsupported Image Format: {image_path}")
+            boot_log("ERROR", "❌ Unsupported image format.")
             return
 
-        print(f"✅ Image loaded and centered: {image_path} at ({center_x}, {center_y})")
+        # (3) Final display update
+        presto.update()
+        boot_log("UI", "✅ Image displayed successfully.")
 
-    except Exception as e:
-        print(f"🚨 Error Displaying Image: {e}")
+    # ------------ Exceptions Without Stringifying 'e' ------------
+    except OSError:
+        boot_log("ERROR", "❌ OSError while opening or decoding the image.")
+    except MemoryError:
+        boot_log("ERROR", "❌ MemoryError! Try smaller images or half-scale decode.")
+    except:
+        boot_log("ERROR", "❌ Unknown error while decoding the image.")
 
 
-# 📡 Countdown Timer (With Auto Fetch When Countdown Ends)
+
+# 📡 **Countdown Timer + LED Effects**
+
 def display_countdown(launch_time):
-    vector.set_font("Roboto-Medium.af", 35)  # ✅ Keep countdown font large
+    """Displays countdown timer with formatted labels and animation effects."""
+    global nebula_step  # ✅ Keep nebula animation continuous
 
-    # Measure widths of countdown elements
-    t_dash_width = int(vector.measure_text("T-")[2])  # Measure "T-" width
-    num_widths = [int(vector.measure_text(f"00")[2]) for _ in range(4)]  # Measure numbers
-    colon_width = int(vector.measure_text(":")[2])  # Measure width of a colon
+    # ✅ **Clear Terminal Before Starting Countdown**
+    global BOOT_LOG
+    BOOT_LOG.clear()  # ✅ Remove all previous log messages
+    presto.update()   # ✅ Ensure screen clears
 
-    # Calculate total countdown width (including "T-" at the start)
+    # **Font Sizes**
+    vector.set_font("Roboto-Medium.af", 35)  # ✅ Large countdown font
+    label_font_size = 18  # ✅ Smaller font for labels
+
+    # **Measure Text Widths**
+    t_dash_width = int(vector.measure_text("T-")[2])
+    num_widths = [int(vector.measure_text("00")[2]) for _ in range(4)]
+    colon_width = int(vector.measure_text(":")[2])
+
+    # **Calculate Total Countdown Width**
+    x_offset = -22
     total_countdown_width = t_dash_width + sum(num_widths) + (colon_width * 3) + (15 * 4)
-    countdown_x_start = int((WIDTH - total_countdown_width) // 2 - 20)  # Adjust horizontal alignment
-    text_y = int(HEIGHT // 2 - 30)  # Position below launch details
+    countdown_x_start = int((WIDTH - total_countdown_width) // 2) + x_offset
+    text_y = int(HEIGHT // 2 - 30)
+    label_y = text_y + 30
 
-    label_y = int(text_y + 30)  # Position labels below countdown
-    label_font_size = 18  # Smaller font for labels
-
-    pulse_step = 0  # Used for pulsing effect
-    pulse_speed = 0.10  # Controls how fast the text throbs (lower = slower)
-
-    nebula_step = 0  # Controls nebula color cycling
-    nebula_speed = 0.002  # Smooth nebula effect speed
-    transition_time = 200  # Time for nebula color transition
-    color_progress = 0  # Progress through color transition
-
-    # Each LED starts at a different nebula color
-    led_colors = [NEBULA_COLORS[i % len(NEBULA_COLORS)] for i in range(NUM_LEDS)]
-    next_colors = [(i + 1) % len(NEBULA_COLORS) for i in range(NUM_LEDS)]
+    pulse_step = 0  # ✅ Keep pulse effect local (resets each countdown)
+    # ❌ REMOVE: `nebula_step = 0` (this is the cause of reset!)
 
     while utime.time() < launch_time:
         now = utime.time()
         remaining_seconds = int(launch_time - now)
 
         if remaining_seconds <= 0:
-            # Countdown has ended
-            print("🎉 Countdown complete! Fetching new launch data...")
-            return  # Exit the countdown function to fetch new data
+            boot_log("TIMER", "🎉 Countdown Reached Zero! Fetching New Data...")
+            return True  # Restart process
 
-        # Calculate days, hours, minutes, seconds
+        # ✅ Do NOT clear the entire screen, only update the countdown section
+        display.set_pen(DARKERGREY)
+        display.rectangle(countdown_x_start - 10, text_y - 35, total_countdown_width + 70, 80)
+
+        # **Draw "T-" Prefix**
+        vector.set_font("Roboto-Medium.af", 35)
+        display.set_pen(WHITE)
+        current_x = countdown_x_start
+        vector.text("T-", current_x, text_y)
+        current_x += t_dash_width + 15
+
+        # **Calculate Time Left**
         days = remaining_seconds // 86400
         hours = (remaining_seconds % 86400) // 3600
         minutes = (remaining_seconds % 3600) // 60
         seconds = remaining_seconds % 60
-
         countdown_numbers = [f"{days:02}", f"{hours:02}", f"{minutes:02}", f"{seconds:02}"]
         labels = ["DAYS", "HOURS", "MINS", "SECS"]
-        colons = [":", ":", ":"]
 
-        # **🚨 Countdown Warning Mode (< 30 minutes left)**
-        if remaining_seconds < 1800:  
-            pulse_intensity = int(200 + 55 * math.sin(pulse_step))  # Pulse between 200-255
-            text_color = display.create_pen(pulse_intensity, pulse_intensity, pulse_intensity)  # Adjust white brightness
-
-            # **🔥 Set Backlight LEDs to Pulse Red**
-            red_intensity = int(100 + 100 * math.sin(pulse_step))  # Pulse between 100-200
-            for i in range(NUM_LEDS):  
-                bl.set_rgb(i, red_intensity, 0, 0)  # **Fade all LEDs to red**
-            
-            pulse_step += pulse_speed  # Increment pulse animation step
-
-        else:  # **🌌 Idle Mode (Nebula Effect)**
-            text_color = WHITE  # Default color
-
-            # **🔥 Smoothly Transition Each LED Between Two Colors**
-            color_progress += 1 / transition_time  # Smooth color blending
-            if color_progress >= 1.0:  # Instead of resetting, wrap around
-                color_progress = 0
-                for i in range(NUM_LEDS):  
-                    led_colors[i] = NEBULA_COLORS[next_colors[i]]
-                    next_colors[i] = (next_colors[i] + 1) % len(NEBULA_COLORS)
-
-
-            for i in range(NUM_LEDS):
-                # **Blend Between Current & Next Color**
-                r, g, b = lerp_color(led_colors[i], NEBULA_COLORS[next_colors[i]], color_progress)
-                bl.set_rgb(i, r, g, b)  # Set smooth color transition
-                
-        # 🔥 Fix: Clear the entire countdown area before redrawing
-        display.set_pen(DARKERGREY)
-        display.rectangle(countdown_x_start - 10, text_y - 35, total_countdown_width + 70, 80)
-
-        # ✅ Draw "T-" at the beginning of the countdown
-        vector.set_font("Roboto-Medium.af", 35)  # Keep countdown font large
-        display.set_pen(text_color)  # Apply pulsing effect
-
-        current_x = countdown_x_start
-        vector.text("T-", current_x, text_y)
-        current_x += t_dash_width + 15  # Move forward after "T-"
-
-        # ✅ Draw countdown numbers & colons with even spacing
+        # **Draw Numbers & Colons**
         for i in range(4):
             vector.text(countdown_numbers[i], current_x, text_y)
-            current_x += num_widths[i] + 15  # Move forward
+            current_x += num_widths[i] + 15
             if i < 3:
                 vector.text(":", current_x, text_y)
                 current_x += colon_width + 15
 
-        # ✅ Draw labels under the numbers
-        vector.set_font("Roboto-Medium.af", label_font_size)  # Smaller font for labels
-        display.set_pen(DARKGREY)  # Dark grey for labels
-
+        # **Draw Labels Under Numbers**
+        vector.set_font("Roboto-Medium.af", label_font_size)
+        display.set_pen(DARKGREY)
         current_x = countdown_x_start + t_dash_width + 15
         for i in range(4):
             num_width = num_widths[i]
             label_width = int(vector.measure_text(labels[i])[2])
-            label_x = current_x + (num_width // 2) - (label_width // 2)
+            label_x = int(current_x + (num_width // 2) - (label_width // 2))
             vector.text(labels[i], label_x, label_y)
             current_x += num_width + 15
             if i < 3:
                 current_x += colon_width + 15
 
-        presto.update()
-        utime.sleep(0.05)  # Shorter update time for smooth effects
-
-
-
-
-# 📡 Display Launch Data (No Darkening Background)
-def display_launch(launch_data):
-    display.set_pen(0)  
-    display.clear()
-
-    if launch_data and "results" in launch_data:
-        launch = launch_data["results"][0]  # First launch only
-        name = launch["name"]
-        net = launch["net"]  # Launch timestamp in ISO 8601 (UTC)
-        provider = launch["launch_service_provider"]["name"]
-        location = launch["pad"]["location"]["name"]
-
-        # ✅ Extract and format date as DD-MM-YYYY
-        date_iso = net.split("T")[0]  # Extract YYYY-MM-DD
-        time_iso = net.split("T")[1][:5]  # Extract HH:MM only (UTC/GMT)
-        date_parts = date_iso.split("-")
-        formatted_date = f"{date_parts[2]}-{date_parts[1]}-{date_parts[0]}"  # Convert to DD-MM-YYYY
-
-        # ✅ Convert launch time to Unix timestamp
-        date_time = net[:19]
-        year, month, day = map(int, date_time.split("T")[0].split("-"))
-        hour, minute, second = map(int, date_time.split("T")[1].split(":"))
-        launch_time_unix = utime.mktime((year, month, day, hour, minute, second, 0, 0))
-
-        # ✅ Use `thumbnail_url` instead of full `image_url`
-        image_data = launch.get("image", None)
-        if isinstance(image_data, dict):
-            image_url = image_data.get("thumbnail_url", None)  # ✅ Fetch smaller image
+        # 🚨 **Red Pulse if < 30 mins**
+        if remaining_seconds < 1800:
+            pulse_intensity = int(200 + 55 * math.sin(pulse_step))
+            red_intensity = int(100 + 100 * math.sin(pulse_step))
+            for i in range(NUM_LEDS):
+                bl.set_rgb(i, red_intensity, 0, 0)
+            pulse_step += 0.1
         else:
-            image_url = image_data  # Use directly if already a string
+            # 🌌 **Nebula LED Effect (Continuous Blend)**
+            for i in range(NUM_LEDS):
+                color_index = int((nebula_step + i) % len(NEBULA_COLORS))
+                bl.set_rgb(i, *NEBULA_COLORS[color_index])
+            
+            nebula_step += 0.02  # ✅ Smoothly increment without resetting
 
-        img_path = None
-        if image_url and isinstance(image_url, str):
-            img_path = download_image(image_url, name)
-
-        if img_path:
-            display_background(img_path)  # ✅ Show main background image
-
-        # ✅ Prepare launch info text (centered)
-        text_lines = [
-            {"text": f"🚀 {name}", "size": 30},
-            {"text": f"📅 {formatted_date}", "size": 30},
-            {"text": f"🕒 {time_iso} GMT", "size": 30},
-            {"text": f"🏢 {provider}", "size": 20},  # 🔥 Smaller font
-            {"text": f"📍 {location}", "size": 20},  # 🔥 Smaller font
-        ]
-
-        # ✅ Dynamically center each text line
-        text_y = HEIGHT - 120  # Adjust vertical position
-        spacing = 27  # 🔥 Increased space between lines
-
-        for line in text_lines:
-            vector.set_font("Roboto-Medium.af", line["size"])  # ✅ Set font size
-            text_width = int(vector.measure_text(line["text"])[2])  # ✅ Measure text width
-            text_x = (WIDTH - text_width) // 2  # ✅ Center each line
-
-            # 🔥 Draw Shadow (Black, offset by +2 pixels)
-            display.set_pen(BLACK)
-            vector.text(line["text"], text_x + 2, text_y + 2)
-
-            # 🔥 Draw Main Text (White, on top)
-            display.set_pen(WHITE)
-            vector.text(line["text"], text_x, text_y)
-
-            text_y += spacing  # Move down for next line
-
+        # 🔄 **Update Display**
         presto.update()
+        utime.sleep(1)
 
-        # ✅ Start Countdown Without Clearing the Screen
-        display_countdown(launch_time_unix)
+    return True  # Countdown complete
 
 
 
-# 🔄 Main Loop
+def display_launch_info(name, date, time, provider, location):
+    """Displays the launch details on the screen."""
+    text_lines = [
+        {"text": f"🚀 {name}", "size": 30},
+        {"text": f"📅 {date}", "size": 30},
+        {"text": f"🕒 {time} GMT", "size": 30},
+        {"text": f"🏢 {provider}", "size": 20},
+        {"text": f"📍 {location}", "size": 20},
+    ]
+
+    text_y = HEIGHT - 120
+    spacing = 27
+
+    for line in text_lines:
+        vector.set_font("Roboto-Medium.af", line["size"])
+        text_width = int(vector.measure_text(line["text"])[2])
+        text_x = int((WIDTH - text_width) / 2) - 8  
+
+        display.set_pen(BLACK)
+        vector.text(line["text"], text_x + 2, text_y + 2)
+        display.set_pen(WHITE)
+        vector.text(line["text"], text_x, text_y)
+
+        text_y += spacing
+    presto.update()
+
+
+def display_launch(launch_data):
+    global DEBUG_MODE
+    display.set_pen(BLACK)
+    display.clear()
+    presto.update()
+
+    if not launch_data or "results" not in launch_data:
+        boot_log("WEB", "🚨 No valid launch data received!")
+        return
+
+    launch = launch_data["results"][0]
+    name = launch["name"]
+    net = launch["net"]
+    provider = launch["launch_service_provider"]["name"]
+    location = launch["pad"]["location"]["name"]
+
+    # ✅ Extract & Format Date
+    date_iso = net.split("T")[0]
+    time_iso = net.split("T")[1][:5]
+    date_parts = date_iso.split("-")
+    formatted_date = f"{date_parts[2]}-{date_parts[1]}-{date_parts[0]}"
+
+    # ✅ Convert Launch Time to Unix Timestamp
+    global launch_time_unix
+    year, month, day = map(int, date_iso.split("-"))
+    hour, minute = map(int, time_iso.split(":"))
+    launch_time_unix = utime.mktime((year, month, day, hour, minute, 0, 0, 0))
+
+    # ✅ Download Image
+    image_data = launch.get("image", {})
+    image_url = image_data.get("thumbnail_url", None) if isinstance(image_data, dict) else None
+    img_path = download_image(image_url) if image_url else None
+
+    # ✅ FINAL UI: Disable Debug Mode and Show All Elements
+    DEBUG_MODE = False  
+    display_final_ui(name, formatted_date, time_iso, provider, location, img_path, launch_time_unix)
+
+
+
+def display_final_ui(name, date, time, provider, location, image_path, launch_time):
+    """Displays the final UI with launch details, image, and countdown."""
+
+    # ✅ 1. CLEAR TERMINAL BEFORE SWITCHING TO FINAL UI
+    global BOOT_LOG
+    BOOT_LOG.clear()  # ✅ This ensures the terminal never reappears
+
+    # ✅ 2. Render the Final UI
+    if isinstance(image_path, str):
+        display_background(image_path)
+
+    display_launch_info(name, date, time, provider, location)  
+
+    # ✅ 3. Start Countdown WITHOUT Erasing Other UI Elements
+    display_countdown(launch_time)  # 🚀 Runs without printing "Countdown Started..."
+
+    # ✅ 4. FINAL UPDATE (After Everything is Rendered)
+    presto.update()
+
+
+
+
+## 🔄 **Main Loop**
 setup_sd()
-connect_wifi()  
+connect_wifi()
 clear_images()
 gc.collect()
 
 while True:
+    boot_log("SYSTEM", "🔄 Fetching new launch data...")
     launch_data = fetch_launch_data()
+    
     if launch_data:
-        display_launch(launch_data)
-    print("📡 Display Updated! Next update in 1 hour.")
-    gc.collect()
-    utime.sleep(3600)
+        fetch_and_process_launch(launch_data)  # ✅ Calls final UI properly
+    else:
+        boot_log("ERROR", "❌ Failed to fetch launch data!")
+        utime.sleep(500)  # Retry every 30 sec
 
 
