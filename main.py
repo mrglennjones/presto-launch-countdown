@@ -60,37 +60,43 @@ def wrap_text(text, max_width):
 
     return wrapped_lines  # ✅ Returns a full list of wrapped lines
 
+TERMINAL_MODE = True
+
+# A global flag to indicate whether we still want on-screen terminal logs.
+TERMINAL_MODE = True
+
 def boot_log(category, message):
-    """Logs and displays a message on the Presto screen with automatic word wrapping."""
-    global BOOT_LOG
+    """Logs and (optionally) displays a message on the Presto screen."""
+    global BOOT_LOG, TERMINAL_MODE
 
     log_message = f"[{category}] {message}"
-    print(log_message)  # ✅ Print to console (serial output)
+    print(log_message)  # Always print to console
 
-    # ✅ Wrap text to avoid overflowing
+    # If we've switched to final UI mode, skip redrawing the log text
+    if not TERMINAL_MODE:
+        return
+
+    # Otherwise, do the usual wrap/clear/draw routine
     wrapped_lines = wrap_text(log_message, LOG_WRAP_WIDTH)
-
     for line in wrapped_lines:
-        BOOT_LOG.append(line)  # ✅ Store each wrapped line separately
+        BOOT_LOG.append(line)
 
-    # ✅ Keep only the latest logs on screen
     while len(BOOT_LOG) > MAX_LOG_LINES:
-        BOOT_LOG.pop(0)  # ✅ Remove oldest log entry
+        BOOT_LOG.pop(0)
 
-    # 🔄 **Update Terminal Display**
-    display.set_pen(BLACK)  # Clear the screen
+    display.set_pen(BLACK)
     display.clear()
-
-    y_offset = 15  # Start from the top of the screen
+    y_offset = 15
     vector.set_font("Roboto-Medium.af", 18)
 
-    for log in BOOT_LOG:
+    for log_line in BOOT_LOG:
         display.set_pen(GREEN)
-        vector.text(log, 10, y_offset)  # ✅ Draw each log entry
-        y_offset += LOG_LINE_HEIGHT  # ✅ Move down for the next log line
+        vector.text(log_line, 10, y_offset)
+        y_offset += LOG_LINE_HEIGHT
 
-    presto.update()  # ✅ Force screen refresh
-    utime.sleep(0.1)  # ✅ Small delay to allow updates
+    presto.update()
+    utime.sleep(0.1)
+
 
 
 
@@ -122,25 +128,47 @@ def lerp_color(color1, color2, t):
     )
 
 # 🌌 **Idle Nebula Effect**
-def nebula_idle_effect():
+def update_nebula_color():
     global nebula_step
+    
     nebula_speed = 0.02
 
-    while True:
-        for i in range(NUM_LEDS):
-            color_index = int((nebula_step + i) % len(NEBULA_COLORS))
-            r, g, b = NEBULA_COLORS[color_index]
-
-            # Apply a sine wave brightness effect for smooth blending
-            brightness_factor = 0.5 + 0.5 * math.sin(nebula_step + (i * 0.5))
-            r = int(r * brightness_factor)
-            g = int(g * brightness_factor)
-            b = int(b * brightness_factor)
-
-            bl.set_rgb(i, r, g, b)  # Set LED color
+    for i in range(NUM_LEDS):
+        # 1) Compute a *float* index, e.g. 3.25 means 25% of the way from color[3] to color[4]
+        idx_float = (nebula_step + i) % len(NEBULA_COLORS)
         
-        nebula_step += nebula_speed
-        utime.sleep(0.05)  # Smooth update interval
+        # 2) Separate into integer + fractional
+        idx_int = int(idx_float)  # e.g. 3
+        alpha   = idx_float - idx_int  # e.g. 0.25
+        
+        # 3) Identify the “next” color index
+        next_idx = (idx_int + 1) % len(NEBULA_COLORS)
+        
+        # 4) LERP between NEBULA_COLORS[idx_int] and NEBULA_COLORS[next_idx]
+        c1 = NEBULA_COLORS[idx_int]
+        c2 = NEBULA_COLORS[next_idx]
+        
+        r1, g1, b1 = c1
+        r2, g2, b2 = c2
+        
+        # Linear interpolation
+        r = int(r1 + (r2 - r1) * alpha)
+        g = int(g1 + (g2 - g1) * alpha)
+        b = int(b1 + (b2 - b1) * alpha)
+        
+        # 5) Optionally apply the sine-wave brightness factor like before
+        brightness = 0.5 + 0.5 * math.sin(nebula_step + (i * 0.5))
+        r = int(r * brightness)
+        g = int(g * brightness)
+        b = int(b * brightness)
+        
+        # 6) Set the LED color
+        bl.set_rgb(i, r, g, b)
+
+    # 7) Increment step for next frame
+    nebula_step += nebula_speed
+
+
 
 # 🖥️ Initialize Presto in FULL resolution mode (480x480)
 #presto = Presto(ambient_light=False, full_res=True)
@@ -352,6 +380,8 @@ def fetch_and_process_launch(launch_data):
         boot_log("ERROR", "❌ Image Load Failed!")
 
     # ✅ **Ensure Terminal is Fully Removed Here**
+    global TERMINAL_MODE
+    TERMINAL_MODE = False
     display_final_ui(name, formatted_date, time_iso, provider, location, img_path, launch_time_unix)
 
 
@@ -359,13 +389,13 @@ def fetch_and_process_launch(launch_data):
 # 📡 **Fetch latest launch data**
 def fetch_launch_data():
     boot_log("WEB", "🌍 Fetching Launch Data...")
-    base_url = "https://lldev.thespacedevs.com/2.3.0/launches/"
+    base_url = "https://ll.thespacedevs.com/2.3.0/launches/"
     now = utime.time()
     future = now + (180 * 24 * 60 * 60)  # 6 months ahead
     now_iso = unix_to_iso8601(now)
     future_iso = unix_to_iso8601(future)
 
-    url = f"{base_url}?net__gte={now_iso}&net__lte={future_iso}&include_suborbital=false&mode=detailed&limit=1&ordering=net"
+    url = f"{base_url}?net__gte={now_iso}&net__lte={future_iso}&include_suborbital=true&mode=detailed&limit=1&ordering=net"
 
     try:
         response = urequests.get(url)
@@ -416,12 +446,20 @@ def display_background(image_path):
             local_png = pngdec.PNG(display)
             local_png.open_file(image_path)
 
-            w, h = local_png.get_width(), local_png.get_height()
-            center_x = (WIDTH - w) // 2
-            center_y = (HEIGHT - h) // 2
+            # Original width & height
+            w = local_png.get_width()
+            h = local_png.get_height()
 
-            # If big images cause memory issues, you can do scale=2 to reduce size
-            local_png.decode(center_x, center_y, scale=1)
+            # We're scaling up by 2, so the final displayed size will be w*2 x h*2.
+            scaled_w = w * 2
+            scaled_h = h * 2
+
+            # Center based on scaled dimensions
+            center_x = (WIDTH - scaled_w) // 2
+            center_y = (HEIGHT - scaled_h) // 2
+
+            # Decode at 2× scale, so it fills more of the screen
+            local_png.decode(center_x, center_y, scale=2)
 
         # ---------- Handle JPEG/JPG ----------
         elif image_path.lower().endswith((".jpg", ".jpeg")):
@@ -432,7 +470,7 @@ def display_background(image_path):
             center_x = (WIDTH - w) // 2
             center_y = (HEIGHT - h) // 2
 
-            # If memory is tight, you can try:
+            # If memory is tight, consider half-scale:
             # local_jpeg.decode(center_x, center_y, jpegdec.JPEG_SCALE_HALF, dither=False)
             local_jpeg.decode(center_x, center_y, jpegdec.JPEG_SCALE_FULL, dither=True)
 
@@ -446,15 +484,20 @@ def display_background(image_path):
 
     # ------------ Exceptions Without Stringifying 'e' ------------
     except OSError:
+        # Matches Pimoroni's example approach
         boot_log("ERROR", "❌ OSError while opening or decoding the image.")
     except MemoryError:
+        # Common on large images in 480×480 mode
         boot_log("ERROR", "❌ MemoryError! Try smaller images or half-scale decode.")
     except:
+        # Catch-all for anything else (including if jpegdec returned a tuple)
         boot_log("ERROR", "❌ Unknown error while decoding the image.")
 
 
 
+
 # 📡 **Countdown Timer + LED Effects**
+#nebula_step = 0  # ✅ Keep this outside so it persists
 
 def display_countdown(launch_time):
     """Displays countdown timer with formatted labels and animation effects."""
@@ -643,20 +686,27 @@ def display_final_ui(name, date, time, provider, location, image_path, launch_ti
 
 
 
-## 🔄 **Main Loop**
+# 🛠️ Setup/Initialization
 setup_sd()
 connect_wifi()
 clear_images()
 gc.collect()
 
+# Main loop
 while True:
+    # 1) Fetch new launch data
     boot_log("SYSTEM", "🔄 Fetching new launch data...")
     launch_data = fetch_launch_data()
     
     if launch_data:
-        fetch_and_process_launch(launch_data)  # ✅ Calls final UI properly
+        # 2) Process/Display the launch info
+        fetch_and_process_launch(launch_data)
     else:
         boot_log("ERROR", "❌ Failed to fetch launch data!")
-        utime.sleep(500)  # Retry every 30 sec
-
+    
+    # 3) **Rate-limit** by sleeping a total of 500 seconds 
+    #    but in smaller chunks (e.g. 5 seconds * 100 = 500)
+    for _ in range(100):
+        update_nebula_color()  # keeps the LED animation flowing
+        utime.sleep(5)
 
