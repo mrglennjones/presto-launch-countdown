@@ -389,7 +389,7 @@ def fetch_and_process_launch(launch_data):
 # 📡 **Fetch latest launch data**
 def fetch_launch_data():
     boot_log("WEB", "🌍 Fetching Launch Data...")
-    base_url = "https://ll.thespacedevs.com/2.3.0/launches/"
+    base_url = "https://lldev.thespacedevs.com/2.3.0/launches/"
     now = utime.time()
     future = now + (180 * 24 * 60 * 60)  # 6 months ahead
     now_iso = unix_to_iso8601(now)
